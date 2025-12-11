@@ -4,6 +4,7 @@
 
 from datetime import date
 
+# Эти даты используются только для текста приветствия и расчёта индекса.
 ADVENT_START = date(2024, 12, 24)
 ADVENT_END = date(2025, 1, 11)
 
