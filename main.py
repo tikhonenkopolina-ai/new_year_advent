@@ -246,15 +246,20 @@ async def handle_webhook(request: web.Request) -> web.Response:
     return web.Response(text="ok")
 
 
-async def on_startup(app: web.Application) -> None:
+async def on_startup(web_app: web.Application) -> None:
     """
     Хук, который вызывается при старте aiohttp-приложения.
 
     Здесь мы:
+    - инициализируем приложение python-telegram-bot (Application.initialize);
     - читаем WEBHOOK_URL из переменных окружения;
     - регистрируем вебхук в Telegram (bot.set_webhook).
     """
-    bot_app: Application = app["bot_app"]
+    bot_app: Application = web_app["bot_app"]
+
+    # ОБЯЗАТЕЛЬНО: инициализируем приложение PTB перед process_update
+    await bot_app.initialize()
+
     webhook_url = os.environ.get("WEBHOOK_URL")
     secret_token = os.environ.get("WEBHOOK_SECRET", "")
 
