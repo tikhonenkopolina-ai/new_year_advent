@@ -1,15 +1,13 @@
-# Telegram Advent Bot (v3, упрощённый webhook)
+# Telegram Advent Bot — версия без ограничений по датам
 
-Эта версия использует встроенный сервер `run_webhook()` из
-`python-telegram-bot`, без собственного aiohttp-приложения.
+Эта сборка:
+- использует `Application.run_webhook()` (без собственного aiohttp);
+- не проверяет, начался ли адвент и закончился ли он;
+- просто зацикливает дни по текущей дате.
 
-Это:
-- убирает ошибку `This Application was not initialized via 'Application.initialize'!`;
-- упрощает код;
-- остаётся полностью бесплатным на Render (free план).
+Алгоритм:
+- берём сегодняшнюю дату;
+- считаем `delta = today - ADVENT_START`;
+- индекс дня = `delta % len(ADVENT_DAYS)`.
 
-Для работы нужно задать переменные окружения:
-- `TELEGRAM_TOKEN`
-- `WEBHOOK_URL` (например, `https://telegram-advent-bot.onrender.com/webhook`)
-- `WEBHOOK_SECRET` (опционально)
-- `TZ_NAME` (например, `Europe/Amsterdam`)
+Так можно тестировать бота в любое время года — каждый день будет «какой-то» из 19 подготовленных дней.
