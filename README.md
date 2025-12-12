@@ -1,5 +1,8 @@
-# Telegram Advent Bot — без дат в тексте
+# Telegram Advent Bot — обработка "Query is too old"
 
-- /start больше НЕ показывает диапазон 24.12–11.01, только общее описание.
-- Логика без ограничений по датам: день выбирается циклически от ADVENT_START.
-- Используется `run_webhook()` из `python-telegram-bot` для простого деплоя на Render.
+Эта версия:
+- без привязки к датам;
+- использует run_webhook();
+- в `handle_unpack_callback` оборачивает `query.answer()` в try/except BadRequest,
+  чтобы не падать на ошибке "Query is too old and response timeout expired or query id is invalid"
+  (она появляется, когда Render долго просыпается и Telegram считает нажатие устаревшим).

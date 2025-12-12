@@ -28,6 +28,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
 )
+from telegram.error import BadRequest
 
 from advent_content import ADVENT_DAYS, ADVENT_START, ADVENT_END
 
@@ -116,12 +117,21 @@ async def handle_unpack_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     Никаких проверок начала/конца периода адвента — просто отдаём
     соответствующий дню контент (с зацикливанием по списку).
+
+    Ошибка вида
+    `telegram.error.BadRequest: Query is too old and response timeout expired or query id is invalid`
+    может возникать, если Render долго просыпался и Telegram считает нажатие
+    «устаревшим». Поэтому мы оборачиваем query.answer() в try/except,
+    чтобы не падать и всё равно отправлять подарок.
     """
     query = update.callback_query
     if not query:
         return
 
-    await query.answer()
+    try:
+        await query.answer()
+    except BadRequest as e:
+        logger.warning("Не удалось ответить на callback (скорее всего, он устарел): %s", e)
 
     today: date = datetime.now(TZ).date()
     index = get_today_index()
