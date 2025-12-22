@@ -11,3 +11,6 @@ Render Free + Webhooks.
 ## Notes
 - Даты не ограничивают работу: дни циклично по кругу.
 - Ошибка Telegram "Query is too old" обработана.
+
+## /getid
+Отправь боту фото/видео → напиши /getid → получишь file_id.

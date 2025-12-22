@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Telegram Advent Bot (Render Free) — финальная версия.
+Telegram Advent Bot (Render Free) — финальная версия + /getid.
 
 ✅ Вебхуки через python-telegram-bot.run_webhook()
 ✅ Без календарных ограничений (дни циклично по кругу)
 ✅ Не падает на "Query is too old" (Render может просыпаться долго)
+✅ /getid — выдаёт file_id последнего присланного фото/видео
 
 ENV:
 - TELEGRAM_TOKEN (обязательно)
@@ -19,7 +20,14 @@ from datetime import datetime, date
 from zoneinfo import ZoneInfo
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 from telegram.error import BadRequest
 
 from advent_content import ADVENT_DAYS, ADVENT_START
@@ -51,20 +59,74 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Привет, любимый! 💌\n\n"
         "Этот бот каждый день дарит маленький подарок: текст, фото или видео.\n\n"
         "Нажимай кнопку «🎁 Распаковать подарок на сегодня».\n\n"
-        "Всё, что мы уже распаковали, остаётся в чате — можно возвращаться и пересматривать 🤍"
+        "Всё, что мы уже распаковали, остаётся в чате — можно возвращаться и пересматривать 🤍\n\n"
+        "Если хочешь добавить фото/видео в контент:\n"
+        "1) пришли сюда фото или видео\n"
+        "2) напиши /getid — я верну file_id"
     )
     await update.message.reply_text(text, reply_markup=main_keyboard())
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (
-        "Как пользоваться:\n"
-        "1) Нажми «🎁 Распаковать подарок на сегодня»\n"
-        "2) Получишь подарок\n"
-        "3) Всё остаётся в чате\n\n"
-        "Сейчас нет привязки к датам — можно тестировать в любой день."
+        "Команды:\n"
+        "• /start — приветствие\n"
+        "• /help — помощь\n"
+        "• /getid — получить file_id последнего фото/видео, которое ты прислала боту\n\n"
+        "Как получить file_id:\n"
+        "1) Отправь фото или видео\n"
+        "2) Напиши /getid\n"
     )
     await update.message.reply_text(text, reply_markup=main_keyboard())
+
+
+async def capture_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Запоминаем file_id последнего фото/видео от пользователя.
+    Это нужно для команды /getid.
+    """
+    msg = update.message
+    if not msg:
+        return
+
+    if msg.photo:
+        # Берём самое большое по размеру (последний элемент)
+        fid = msg.photo[-1].file_id
+        context.user_data["last_media_type"] = "photo"
+        context.user_data["last_file_id"] = fid
+        await msg.reply_text("Фото принято ✅\nТеперь напиши /getid, и я пришлю file_id.")
+        return
+
+    if msg.video:
+        fid = msg.video.file_id
+        context.user_data["last_media_type"] = "video"
+        context.user_data["last_file_id"] = fid
+        await msg.reply_text("Видео принято ✅\nТеперь напиши /getid, и я пришлю file_id.")
+        return
+
+
+async def getid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Отдаём file_id последнего сохранённого фото/видео для этого пользователя.
+    """
+    fid = context.user_data.get("last_file_id")
+    mtype = context.user_data.get("last_media_type")
+
+    if not fid or not mtype:
+        await update.message.reply_text(
+            "Я пока не вижу последнего фото/видео.\n\n"
+            "Сделай так:\n"
+            "1) отправь мне фото или видео\n"
+            "2) потом снова напиши /getid"
+        )
+        return
+
+    await update.message.reply_text(
+        f"Готово! ✨\n\n"
+        f"Тип: {mtype}\n"
+        f"file_id:\n{fid}\n\n"
+        f"Скопируй его и вставь в advent_content.py в нужный день."
+    )
 
 
 async def unpack(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -109,8 +171,16 @@ def main() -> None:
         raise RuntimeError("WEBHOOK_URL не задан (пример: https://<service>.onrender.com/webhook)")
 
     app = Application.builder().token(token).build()
+
+    # Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("getid", getid))
+
+    # Media capture (photo/video)
+    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, capture_media))
+
+    # Button callback
     app.add_handler(CallbackQueryHandler(unpack, pattern=f"^{UNPACK_CALLBACK}$"))
 
     logger.info("Starting webhook on port %s", port)
