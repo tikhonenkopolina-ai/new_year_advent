@@ -1,6 +1,7 @@
-# Telegram Advent Bot
+# Telegram Advent Bot (Sequential)
 
 - Кнопка: «Что там сегодня?»
+- Дни открываются по порядку с Дня 1 (прогресс хранится в state.db)
 - На день: 1 текст, затем медиа подряд без подписей
 - Render Free + Webhooks
-- python-telegram-bot[webhooks]==21.4
+- Команда для теста: /reset (сбрасывает прогресс в этом чате)
