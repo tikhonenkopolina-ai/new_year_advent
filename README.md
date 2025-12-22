@@ -1,16 +1,6 @@
-# Telegram Advent Bot (Final)
+# Telegram Advent Bot
 
-Render Free + Webhooks.
-
-## Env vars
-- TELEGRAM_TOKEN
-- WEBHOOK_URL  (например: https://telegram-advent-bot.onrender.com/webhook)
-- TZ_NAME (optional)
-- WEBHOOK_SECRET (optional)
-
-## Notes
-- Даты не ограничивают работу: дни циклично по кругу.
-- Ошибка Telegram "Query is too old" обработана.
-
-## /getid
-Отправь боту фото/видео → напиши /getid → получишь file_id.
+- Кнопка: «Что там сегодня?»
+- На день: 1 текст, затем медиа подряд без подписей
+- Render Free + Webhooks
+- python-telegram-bot[webhooks]==21.4

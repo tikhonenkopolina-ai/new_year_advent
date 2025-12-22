@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
 """
-Telegram Advent Bot (Render Free) — финальная версия + /getid.
+Telegram Advent Bot (Render Free) — финальная версия.
 
-✅ Вебхуки через python-telegram-bot.run_webhook()
-✅ Без календарных ограничений (дни циклично по кругу)
-✅ Не падает на "Query is too old" (Render может просыпаться долго)
-✅ /getid — выдаёт file_id последнего присланного фото/видео
-
-ENV:
-- TELEGRAM_TOKEN (обязательно)
-- WEBHOOK_URL (обязательно)  -> https://<your-service>.onrender.com/webhook
-- TZ_NAME (опционально)      -> Europe/Amsterdam
-- WEBHOOK_SECRET (опционально)
+- Вебхуки через python-telegram-bot.run_webhook()
+- Кнопка: «Что там сегодня?»
+- Без дат и без календарных ограничений: дни крутятся по кругу
+- На день: 1 текстовое сообщение, затем медиа подряд БЕЗ подписей
+- Обработана ошибка Telegram: "Query is too old..."
 """
 
 import os
@@ -20,14 +15,7 @@ from datetime import datetime, date
 from zoneinfo import ZoneInfo
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
-)
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from telegram.error import BadRequest
 
 from advent_content import ADVENT_DAYS, ADVENT_START
@@ -39,124 +27,64 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 TZ = ZoneInfo(os.getenv("TZ_NAME", "Europe/Amsterdam"))
-UNPACK_CALLBACK = "UNPACK_TODAY"
+BUTTON_TEXT = "Что там сегодня?"
+CALLBACK = "TODAY"
 
 
-def get_index_for_today() -> int:
+def day_index() -> int:
     """Цикличный индекс дня по текущей дате."""
     today: date = datetime.now(TZ).date()
     return (today - ADVENT_START).days % len(ADVENT_DAYS)
 
 
-def main_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🎁 Распаковать подарок на сегодня", callback_data=UNPACK_CALLBACK)]]
-    )
+def keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton(BUTTON_TEXT, callback_data=CALLBACK)]])
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (
-        "Привет, любимый! 💌\n\n"
-        "Этот бот каждый день дарит маленький подарок: текст, фото или видео.\n\n"
-        "Нажимай кнопку «🎁 Распаковать подарок на сегодня».\n\n"
-        "Всё, что мы уже распаковали, остаётся в чате — можно возвращаться и пересматривать 🤍\n\n"
-        "Если хочешь добавить фото/видео в контент:\n"
-        "1) пришли сюда фото или видео\n"
-        "2) напиши /getid — я верну file_id"
+        "Привет, Пшеничка 🤍\n"
+        "Это адвент-бот, который будет дарить тебе подарки\n"
+        "и напоминать о приятных моментах,\n"
+        "пока между нами несколько тысяч километров.\n"
+        "Кнопка: что там сегодня?"
     )
-    await update.message.reply_text(text, reply_markup=main_keyboard())
+    await update.message.reply_text(text, reply_markup=keyboard())
 
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = (
-        "Команды:\n"
-        "• /start — приветствие\n"
-        "• /help — помощь\n"
-        "• /getid — получить file_id последнего фото/видео, которое ты прислала боту\n\n"
-        "Как получить file_id:\n"
-        "1) Отправь фото или видео\n"
-        "2) Напиши /getid\n"
-    )
-    await update.message.reply_text(text, reply_markup=main_keyboard())
-
-
-async def capture_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Запоминаем file_id последнего фото/видео от пользователя.
-    Это нужно для команды /getid.
-    """
-    msg = update.message
-    if not msg:
-        return
-
-    if msg.photo:
-        # Берём самое большое по размеру (последний элемент)
-        fid = msg.photo[-1].file_id
-        context.user_data["last_media_type"] = "photo"
-        context.user_data["last_file_id"] = fid
-        await msg.reply_text("Фото принято ✅\nТеперь напиши /getid, и я пришлю file_id.")
-        return
-
-    if msg.video:
-        fid = msg.video.file_id
-        context.user_data["last_media_type"] = "video"
-        context.user_data["last_file_id"] = fid
-        await msg.reply_text("Видео принято ✅\nТеперь напиши /getid, и я пришлю file_id.")
-        return
-
-
-async def getid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Отдаём file_id последнего сохранённого фото/видео для этого пользователя.
-    """
-    fid = context.user_data.get("last_file_id")
-    mtype = context.user_data.get("last_media_type")
-
-    if not fid or not mtype:
-        await update.message.reply_text(
-            "Я пока не вижу последнего фото/видео.\n\n"
-            "Сделай так:\n"
-            "1) отправь мне фото или видео\n"
-            "2) потом снова напиши /getid"
-        )
-        return
-
-    await update.message.reply_text(
-        f"Готово! ✨\n\n"
-        f"Тип: {mtype}\n"
-        f"file_id:\n{fid}\n\n"
-        f"Скопируй его и вставь в advent_content.py в нужный день."
-    )
-
-
-async def unpack(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     q = update.callback_query
     if not q:
         return
 
-    # Render Free может проснуться не сразу -> Telegram иногда считает callback "протухшим"
     try:
         await q.answer()
     except BadRequest as e:
-        logger.warning("Callback query too old / invalid: %s", e)
+        logger.warning("Callback query too old/invalid: %s", e)
 
-    idx = get_index_for_today()
-    item = ADVENT_DAYS[idx]
+    idx = day_index()
+    day = ADVENT_DAYS[idx]
 
-    media_type = item.get("media_type", "text")
-    file_id = item.get("file_id")
-    base_text = (item.get("text") or "").strip()
-    today = datetime.now(TZ).date()
-    text = f"{base_text}\n\n(Сегодня {today.strftime('%d.%m')}, день #{idx+1})"
+    # 1) один текст
+    await q.message.reply_text(day["text"])
 
-    if media_type == "photo" and file_id:
-        await q.message.reply_photo(photo=file_id, caption=text)
-    elif media_type == "video" and file_id:
-        await q.message.reply_video(video=file_id, caption=text)
-    else:
-        await q.message.reply_text(text)
+    # 2) медиа подряд без подписей
+    for item in day.get("media", []):
+        t = item.get("type")
+        fid = item.get("file_id")
+        if not t or not fid:
+            continue
 
-    await q.message.reply_text("Жду тебя здесь снова 🤍", reply_markup=main_keyboard())
+        if t == "photo":
+            await q.message.reply_photo(photo=fid)
+        elif t == "video":
+            await q.message.reply_video(video=fid)
+        elif t == "animation":
+            await q.message.reply_animation(animation=fid)
+        elif t == "document":
+            await q.message.reply_document(document=fid)
+
+    await q.message.reply_text("🤍", reply_markup=keyboard())
 
 
 def main() -> None:
@@ -171,17 +99,8 @@ def main() -> None:
         raise RuntimeError("WEBHOOK_URL не задан (пример: https://<service>.onrender.com/webhook)")
 
     app = Application.builder().token(token).build()
-
-    # Commands
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("getid", getid))
-
-    # Media capture (photo/video)
-    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, capture_media))
-
-    # Button callback
-    app.add_handler(CallbackQueryHandler(unpack, pattern=f"^{UNPACK_CALLBACK}$"))
+    app.add_handler(CallbackQueryHandler(today, pattern=f"^{CALLBACK}$"))
 
     logger.info("Starting webhook on port %s", port)
     logger.info("WEBHOOK_URL=%s", webhook_url)
