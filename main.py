@@ -3,15 +3,16 @@
 Telegram Advent Bot (Render Free) — финальная версия.
 
 - Webhooks (python-telegram-bot[webhooks])
-- Кнопка: «Что там сегодня?»
-- Дни открываются ПО ПОРЯДКУ с Дня 1 (прогресс запоминается для каждого чата)
+- Кнопка: «Что сегодня?»
+- Дни открываются по порядку с Дня 1 (прогресс запоминается для каждого чата)
+- ОГРАНИЧЕНИЕ: 1 подарок в день на чат (по TZ_NAME)
 - На день: 1 текстовое сообщение, затем медиа подряд БЕЗ подписей
 - Обработана ошибка Telegram: "Query is too old..." (Render Free может просыпаться долго)
 
 ENV:
 - TELEGRAM_TOKEN (обязательно)
 - WEBHOOK_URL (обязательно)  -> https://<your-service>.onrender.com/webhook
-- TZ_NAME (опционально)
+- TZ_NAME (опционально, напр. Europe/Amsterdam)
 - WEBHOOK_SECRET (опционально)
 """
 
@@ -19,6 +20,8 @@ import os
 import logging
 import sqlite3
 from pathlib import Path
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -32,9 +35,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-BUTTON_TEXT = "Что там сегодня?"
+TZ = ZoneInfo(os.getenv("TZ_NAME", "Europe/Amsterdam"))
+
+BUTTON_TEXT = "Что сегодня?"
 CALLBACK = "TODAY"
 DB_PATH = Path(os.getenv("STATE_DB_PATH", "state.db"))
+
+LIMIT_TEXT = "Я знаю, что ты запойный, но наберись терпения — завтра ты всё узнаешь ❤️"
 
 
 def _db() -> sqlite3.Connection:
@@ -43,36 +50,41 @@ def _db() -> sqlite3.Connection:
         """
         CREATE TABLE IF NOT EXISTS progress (
             chat_id INTEGER PRIMARY KEY,
-            idx INTEGER NOT NULL
+            idx INTEGER NOT NULL,
+            last_open_date TEXT
         )
         """
     )
     return conn
 
 
-def get_idx(chat_id: int) -> int:
+def get_state(chat_id: int) -> tuple[int, str | None]:
     conn = _db()
     try:
-        cur = conn.execute("SELECT idx FROM progress WHERE chat_id = ?", (chat_id,))
+        cur = conn.execute("SELECT idx, last_open_date FROM progress WHERE chat_id = ?", (chat_id,))
         row = cur.fetchone()
         if row is None:
-            return 0
-        return int(row[0])
+            return 0, None
+        return int(row[0]), row[1]
     finally:
         conn.close()
 
 
-def set_idx(chat_id: int, idx: int) -> None:
+def set_state(chat_id: int, idx: int, last_open_date: str | None) -> None:
     conn = _db()
     try:
         conn.execute(
-            "INSERT INTO progress(chat_id, idx) VALUES(?, ?) "
-            "ON CONFLICT(chat_id) DO UPDATE SET idx=excluded.idx",
-            (chat_id, idx),
+            "INSERT INTO progress(chat_id, idx, last_open_date) VALUES(?, ?, ?) "
+            "ON CONFLICT(chat_id) DO UPDATE SET idx=excluded.idx, last_open_date=excluded.last_open_date",
+            (chat_id, idx, last_open_date),
         )
         conn.commit()
     finally:
         conn.close()
+
+
+def today_key() -> str:
+    return datetime.now(TZ).date().isoformat()
 
 
 def keyboard() -> InlineKeyboardMarkup:
@@ -90,10 +102,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Сброс прогресса (только для тебя, если нужно тестировать)."""
+    """Сброс прогресса (для теста)."""
     chat_id = update.effective_chat.id
-    set_idx(chat_id, 0)
-    await update.message.reply_text("Прогресс сброшен. Начинаем с Дня 1 🤍", reply_markup=keyboard())
+    set_state(chat_id, 0, None)
+    await update.message.reply_text("Прогресс сброшен. Начинаем с Дня 1 ❤️", reply_markup=keyboard())
 
 
 async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -108,10 +120,16 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.warning("Callback query too old/invalid: %s", e)
 
     chat_id = q.message.chat_id
-    idx = get_idx(chat_id)
+    idx, last_open = get_state(chat_id)
+
+    # лимит: 1 раз в день
+    tk = today_key()
+    if last_open == tk:
+        await q.message.reply_text(LIMIT_TEXT, reply_markup=keyboard())
+        return
 
     if idx >= len(ADVENT_DAYS):
-        await q.message.reply_text("Наш адвент закончился 🤍", reply_markup=keyboard())
+        await q.message.reply_text("Наш адвент закончился ❤️", reply_markup=keyboard())
         return
 
     day = ADVENT_DAYS[idx]
@@ -134,10 +152,10 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         elif t == "document":
             await q.message.reply_document(document=fid)
 
-    # сохранить прогресс (следующий день)
-    set_idx(chat_id, idx + 1)
+    # сохранить прогресс + дату открытия
+    set_state(chat_id, idx + 1, tk)
 
-    await q.message.reply_text("🤍", reply_markup=keyboard())
+    await q.message.reply_text("❤️", reply_markup=keyboard())
 
 
 def main() -> None:
