@@ -14,3 +14,5 @@ services:
         sync: false
       - key: TZ_NAME
         value: "Europe/Amsterdam"
+      - key: ADVENT_START_DATE
+        value: "2025-12-23"

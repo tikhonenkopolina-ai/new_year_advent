@@ -4,8 +4,8 @@ Telegram Advent Bot (Render Free) — финальная версия.
 
 - Webhooks (python-telegram-bot[webhooks])
 - Кнопка: «Что сегодня?»
-- Дни открываются по порядку с Дня 1 (прогресс запоминается для каждого чата)
-- ОГРАНИЧЕНИЕ: 1 подарок в день на чат (по TZ_NAME)
+- 1 подарок в день (по TZ_NAME)
+- ДЕНЬ определяется по календарю: от ADVENT_START_DATE (не зависит от перезапусков Render)
 - На день: 1 текстовое сообщение, затем медиа подряд БЕЗ подписей
 - Обработана ошибка Telegram: "Query is too old..." (Render Free может просыпаться долго)
 
@@ -14,13 +14,14 @@ ENV:
 - WEBHOOK_URL (обязательно)  -> https://<your-service>.onrender.com/webhook
 - TZ_NAME (опционально, напр. Europe/Amsterdam)
 - WEBHOOK_SECRET (опционально)
+- ADVENT_START_DATE (опционально) -> YYYY-MM-DD (для теста можно поставить сегодняшнюю дату)
 """
 
 import os
 import logging
 import sqlite3
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, date
 from zoneinfo import ZoneInfo
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -44,13 +45,25 @@ DB_PATH = Path(os.getenv("STATE_DB_PATH", "state.db"))
 LIMIT_TEXT = "Я знаю, что ты запойный, но наберись терпения — завтра ты всё узнаешь ❤️"
 
 
+def parse_start_date() -> date:
+    s = os.getenv("ADVENT_START_DATE", "2025-12-26")
+    try:
+        y, m, d = s.split("-")
+        return date(int(y), int(m), int(d))
+    except Exception:
+        # fallback
+        return date(2025, 12, 26)
+
+
+ADVENT_START = parse_start_date()
+
+
 def _db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS progress (
             chat_id INTEGER PRIMARY KEY,
-            idx INTEGER NOT NULL,
             last_open_date TEXT
         )
         """
@@ -58,25 +71,23 @@ def _db() -> sqlite3.Connection:
     return conn
 
 
-def get_state(chat_id: int) -> tuple[int, str | None]:
+def get_last_open(chat_id: int) -> str | None:
     conn = _db()
     try:
-        cur = conn.execute("SELECT idx, last_open_date FROM progress WHERE chat_id = ?", (chat_id,))
+        cur = conn.execute("SELECT last_open_date FROM progress WHERE chat_id = ?", (chat_id,))
         row = cur.fetchone()
-        if row is None:
-            return 0, None
-        return int(row[0]), row[1]
+        return row[0] if row else None
     finally:
         conn.close()
 
 
-def set_state(chat_id: int, idx: int, last_open_date: str | None) -> None:
+def set_last_open(chat_id: int, last_open_date: str) -> None:
     conn = _db()
     try:
         conn.execute(
-            "INSERT INTO progress(chat_id, idx, last_open_date) VALUES(?, ?, ?) "
-            "ON CONFLICT(chat_id) DO UPDATE SET idx=excluded.idx, last_open_date=excluded.last_open_date",
-            (chat_id, idx, last_open_date),
+            "INSERT INTO progress(chat_id, last_open_date) VALUES(?, ?) "
+            "ON CONFLICT(chat_id) DO UPDATE SET last_open_date=excluded.last_open_date",
+            (chat_id, last_open_date),
         )
         conn.commit()
     finally:
@@ -85,6 +96,11 @@ def set_state(chat_id: int, idx: int, last_open_date: str | None) -> None:
 
 def today_key() -> str:
     return datetime.now(TZ).date().isoformat()
+
+
+def calendar_index() -> int:
+    today = datetime.now(TZ).date()
+    return (today - ADVENT_START).days  # 0..N
 
 
 def keyboard() -> InlineKeyboardMarkup:
@@ -102,10 +118,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Сброс прогресса (для теста)."""
+    """Для теста: сброс дневного лимита в этом чате."""
     chat_id = update.effective_chat.id
-    set_state(chat_id, 0, None)
-    await update.message.reply_text("Прогресс сброшен. Начинаем с Дня 1 ❤️", reply_markup=keyboard())
+    set_last_open(chat_id, "1970-01-01")
+    await update.message.reply_text("Ок, сбросила лимит на сегодня ❤️", reply_markup=keyboard())
 
 
 async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -113,31 +129,35 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not q:
         return
 
-    # Render Free может проснуться не сразу -> Telegram иногда считает callback "протухшим"
     try:
         await q.answer()
     except BadRequest as e:
         logger.warning("Callback query too old/invalid: %s", e)
 
     chat_id = q.message.chat_id
-    idx, last_open = get_state(chat_id)
 
-    # лимит: 1 раз в день
+    # дневной лимит
     tk = today_key()
-    if last_open == tk:
+    if get_last_open(chat_id) == tk:
         await q.message.reply_text(LIMIT_TEXT, reply_markup=keyboard())
+        return
+
+    idx = calendar_index()
+
+    if idx < 0:
+        await q.message.reply_text("Пока рано 🙂 Завтра будет ближе ❤️", reply_markup=keyboard())
+        set_last_open(chat_id, tk)
         return
 
     if idx >= len(ADVENT_DAYS):
         await q.message.reply_text("Наш адвент закончился ❤️", reply_markup=keyboard())
+        set_last_open(chat_id, tk)
         return
 
     day = ADVENT_DAYS[idx]
 
-    # 1) один текст
     await q.message.reply_text(day["text"])
 
-    # 2) медиа подряд без подписей
     for item in day.get("media", []):
         t = item.get("type")
         fid = item.get("file_id")
@@ -152,9 +172,7 @@ async def today(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         elif t == "document":
             await q.message.reply_document(document=fid)
 
-    # сохранить прогресс + дату открытия
-    set_state(chat_id, idx + 1, tk)
-
+    set_last_open(chat_id, tk)
     await q.message.reply_text("❤️", reply_markup=keyboard())
 
 
@@ -176,6 +194,7 @@ def main() -> None:
 
     logger.info("Starting webhook on port %s", port)
     logger.info("WEBHOOK_URL=%s", webhook_url)
+    logger.info("ADVENT_START_DATE=%s", ADVENT_START.isoformat())
 
     app.run_webhook(
         listen="0.0.0.0",
